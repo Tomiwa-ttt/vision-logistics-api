@@ -22,18 +22,21 @@ async def submit_contact(data: ContactRequest):
         "created_at": datetime.utcnow().isoformat()
     }).execute()
 
-    # Send email notification
-    resend.Emails.send({
-        "from": "Vision Logistics <onboarding@resend.dev>",
-        "to": ADMIN_EMAIL,
-        "subject": f"New Consultation Request from {data.company or data.name}",
-        "html": f"""
-            <h2>New Lead</h2>
-            <p><strong>Name:</strong> {data.name}</p>
-            <p><strong>Email:</strong> {data.email}</p>
-            <p><strong>Company:</strong> {data.company or 'N/A'}</p>
-            <p><strong>Message:</strong> {data.message}</p>
-        """
-    })
+    # Send email notification (non-blocking)
+    try:
+        resend.Emails.send({
+            "from": "Vision Logistics <onboarding@resend.dev>",
+            "to": ADMIN_EMAIL,
+            "subject": f"New Consultation Request from {data.company or data.name}",
+            "html": f"""
+                <h2>New Lead</h2>
+                <p><strong>Name:</strong> {data.name}</p>
+                <p><strong>Email:</strong> {data.email}</p>
+                <p><strong>Company:</strong> {data.company or 'N/A'}</p>
+                <p><strong>Message:</strong> {data.message}</p>
+            """
+        })
+    except Exception:
+        pass  # Email failure won't affect the response
 
     return {"status": "success", "message": "Request received"}

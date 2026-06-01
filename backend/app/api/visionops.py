@@ -1,12 +1,48 @@
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from core.database import supabase
 from core.config import GEMINI_API_KEY
 import httpx
 import base64
 import json
-import os
+import asyncio
 
 router = APIRouter()
+
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
+
+async def call_gemini_with_retry(client: httpx.AsyncClient, payload: dict, max_retries: int = 3) -> dict:
+    """Call the Gemini API with exponential backoff on 429s."""
+    for attempt in range(max_retries):
+        response = await client.post(
+            GEMINI_URL,
+            params={"key": GEMINI_API_KEY},
+            json=payload,
+        )
+
+        if response.status_code == 429:
+            if attempt < max_retries - 1:
+                wait = 2 ** attempt  # 1s, 2s, 4s
+                await asyncio.sleep(wait)
+                continue
+            raise HTTPException(
+                status_code=429,
+                detail="AI service rate limit exceeded. Please wait a moment and try again.",
+            )
+
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Upstream Gemini error: {e.response.status_code}",
+            )
+
+        return response.json()
+
+    # Should never reach here, but just in case
+    raise HTTPException(status_code=429, detail="Rate limit exceeded after retries.")
+
 
 @router.post("/visionops/analyze")
 async def analyze_document(file: UploadFile = File(...)):
@@ -38,26 +74,25 @@ async def analyze_document(file: UploadFile = File(...)):
                     {
                         "inline_data": {
                             "mime_type": mime_type,
-                            "data": base64_file
+                            "data": base64_file,
                         }
                     },
-                    {"text": prompt}
+                    {"text": prompt},
                 ]
             }
         ]
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
-            json=payload
-        )
-        response.raise_for_status()
-        data = response.json()
+        data = await call_gemini_with_retry(client, payload)
 
-    raw = data["candidates"][0]["content"]["parts"][0]["text"]
-    raw = raw.strip().replace("```json", "").replace("```", "").strip()
-    result = json.loads(raw)
+    # Parse Gemini response
+    try:
+        raw = data["candidates"][0]["content"]["parts"][0]["text"]
+        raw = raw.strip().replace("```json", "").replace("```", "").strip()
+        result = json.loads(raw)
+    except (KeyError, IndexError, json.JSONDecodeError) as e:
+        raise HTTPException(status_code=502, detail=f"Failed to parse Gemini response: {e}")
 
     # Save to Supabase
     doc = supabase.table("documents").insert({

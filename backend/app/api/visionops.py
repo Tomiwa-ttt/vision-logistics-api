@@ -1,31 +1,20 @@
 from fastapi import APIRouter, UploadFile, File
 from core.database import supabase
 from core.config import GEMINI_API_KEY
-import google.generativeai as genai
+import httpx
+import base64
 import json
-import tempfile
 import os
 
 router = APIRouter()
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
 
 @router.post("/visionops/analyze")
 async def analyze_document(file: UploadFile = File(...)):
-    # Save file temporarily
     contents = await file.read()
-    suffix = os.path.splitext(file.filename)[1] or ".pdf"
-    
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(contents)
-        tmp_path = tmp.name
+    base64_file = base64.b64encode(contents).decode("utf-8")
+    mime_type = file.content_type or "application/pdf"
 
-    try:
-        # Upload to Gemini
-        uploaded = genai.upload_file(tmp_path, mime_type=file.content_type)
-
-        # Analyze with Gemini
-        prompt = """Analyze this operational document and respond ONLY with a JSON object, no preamble or markdown backticks:
+    prompt = """Analyze this operational document and respond ONLY with a JSON object, no preamble or markdown backticks:
 {
   "document_type": "Invoice | Shipping Manifest | Purchase Order | Delivery Report | Other",
   "extracted": {
@@ -42,14 +31,35 @@ async def analyze_document(file: UploadFile = File(...)):
   "summary": ""
 }"""
 
-        response = model.generate_content([uploaded, prompt])
-        raw = response.text.strip().replace("```json", "").replace("```", "")
-        result = json.loads(raw)
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "inline_data": {
+                            "mime_type": mime_type,
+                            "data": base64_file
+                        }
+                    },
+                    {"text": prompt}
+                ]
+            }
+        ]
+    }
 
-    finally:
-        os.unlink(tmp_path)
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}",
+            json=payload
+        )
+        response.raise_for_status()
+        data = response.json()
 
-    # Save document to Supabase
+    raw = data["candidates"][0]["content"]["parts"][0]["text"]
+    raw = raw.strip().replace("```json", "").replace("```", "").strip()
+    result = json.loads(raw)
+
+    # Save to Supabase
     doc = supabase.table("documents").insert({
         "filename": file.filename,
         "document_type": result.get("document_type"),
@@ -58,7 +68,6 @@ async def analyze_document(file: UploadFile = File(...)):
 
     doc_id = doc.data[0]["id"]
 
-    # Save insight
     supabase.table("insights").insert({
         "document_id": doc_id,
         "risk_score": result.get("risk_score"),

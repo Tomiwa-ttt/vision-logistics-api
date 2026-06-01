@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import contact
+from app.api import contact, visionops
 
 app = FastAPI()
 
@@ -12,3 +12,4 @@ app.add_middleware(
 )
 
 app.include_router(contact.router, prefix="/api")
+app.include_router(visionops.router, prefix="/api")

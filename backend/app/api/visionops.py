@@ -49,7 +49,7 @@ async def analyze_document(file: UploadFile = File(...)):
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
             json=payload
         )
         response.raise_for_status()

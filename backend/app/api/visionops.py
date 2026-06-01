@@ -22,7 +22,7 @@ async def call_gemini_with_retry(client: httpx.AsyncClient, payload: dict, max_r
 
         if response.status_code == 429:
             if attempt < max_retries - 1:
-                wait = 2 ** attempt  # 1s, 2s, 4s
+                wait = 2 ** attempt  # 1s, 2s, 4s, 8s, 16s
                 await asyncio.sleep(wait)
                 continue
             raise HTTPException(
